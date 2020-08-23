@@ -297,10 +297,11 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
 
             close(childToParent[0]);
             close(parentToChild[1]);
-            string method_env = "request_method=" + method;
 
             // 在子进程中设置环境变量
+            string method_env = "request_method=" + method;
             putenv(const_cast<char *>(method_env.data()));
+            
             if (method == "GET")
             {
                 string query_env = "query_str=" + query;
