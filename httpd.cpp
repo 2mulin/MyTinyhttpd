@@ -1,7 +1,7 @@
 /**************************************************
  * @author red
- * @date 2020/7/16
- * @brief服务器端
+ * @date 2020/3/5
+ * @brief 服务器端
  * 主要是参考了tinyhttpd的设计
 **************************************************/
 
@@ -123,10 +123,10 @@ int Internal_Server_Error(int clientfd)
         "       <title>\r\n"
         "           500 Internal Server Error\r\n"
         "       </title>\r\n"
-        "       <body>\r\n"
-        "           <p>CGI execute Error</p>\r\n"
-        "       </body>\r\n"
         "   </head>\r\n"
+        "   <body>\r\n"
+        "       <p>CGI execute Error</p>\r\n"
+        "   </body>\r\n"
         "</html>\r\n";
     if(send(clientfd, buf, sizeof(buf), 0) == -1)
         return -1;
@@ -149,10 +149,10 @@ int not_implemented(int clientfd)
         "<html>\r\n"
         "   <head>\r\n"
         "       <title>501 not implemented</title>\r\n"
-        "       <body>\r\n"
-        "           <p>HTTP request method not supported.</p>\r\n"
-        "       </body>\r\n"
         "   </head>\r\n"
+        "   <body>\r\n"
+        "       <p>HTTP request method not supported.</p>\r\n"
+        "   </body>\r\n"
         "</html>\r\n";
     if(send(clientfd, buf, sizeof(buf), 0) == -1)
         return -1;
@@ -169,17 +169,17 @@ int not_implemented(int clientfd)
 int not_found(int clientfd)
 {
     char buf[] =
-        "HTTP/1.0 404 Not Found\r\n"
+        "HTTP/1.0 404 NOT FOUND\r\n"
         "Server: httpd1.0\r\n"
         "Content-Type: text/html\r\n"
         "\r\n"
         "<html>\r\n"
         "   <head>\r\n"
         "       <title>Not Found</title>\r\n"
-        "       <body>\r\n"
-        "           <p>404 Not Found!</p>\r\n"
-        "       </body>\r\n"
         "   </head>\r\n"
+        "   <body>\r\n"
+        "       <p>404 Not Found!</p>\r\n"
+        "   </body>\r\n"
         "</html>\r\n";
     if(send(clientfd, buf, sizeof(buf), 0) == -1)
         return -1;
@@ -203,11 +203,11 @@ int bad_request(int clientfd)
         "<html>\r\n"
         "   <head>\r\n"
         "       <title>Bad request</title>\r\n"
-        "       <body>\r\n"
-        "           <p>Your browser sent to a bad request</p>\r\n"
-        "           <p>such as a POST without a Content-Length</p>"
-        "       </body>\r\n"
         "   </head>\r\n"
+        "   <body>\r\n"
+        "       <p>Your browser sent to a bad request</p>\r\n"
+        "       <p>such as a POST without a Content-Length</p>\r\n"
+        "   </body>\r\n"
         "</html>\r\n";
     if(send(clientfd, buf, sizeof(buf) - 1, 0) == -1)
         return -1;
@@ -259,9 +259,6 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
         }
     }
 
-    buf = "HTTP/1.0 200 OK\r\n";
-    send(clientfd, buf.data(), buf.length(), 0);
-
     // 子写父读,父写子读
     int childToParent[2], parentToChild[2];
     if (pipe(childToParent) < 0)
@@ -275,6 +272,9 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
         return;
     }
 
+    buf = "HTTP/1.0 200 OK\r\n";
+    send(clientfd, buf.data(), buf.length(), 0);
+    
     // 创建一个子进程，返回的pid,子进程返回的是0，父进程返回的是子进程的pid
     pid_t pid = fork();
 
@@ -299,17 +299,17 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             close(parentToChild[1]);
 
             // 在子进程中设置环境变量
-            string method_env = "request_method=" + method;
+            string method_env = "REQUEST_METHOD=" + method;
             putenv(const_cast<char *>(method_env.data()));
             
             if (method == "GET")
             {
-                string query_env = "query_str=" + query;
+                string query_env = "QUERY_STRING=" + query;
                 putenv(const_cast<char *>(query_env.data()));
             }
             else
             {
-                string length_env = "content-length=" + content_length;
+                string length_env = "CONTENT_LENGTH=" + content_length;
                 putenv(const_cast<char *>(content_length.data()));
             }
             // execl()用来执行参数path字符串所代表的文件路径，接下来的参数代表执行该文件时
@@ -337,7 +337,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             // 从子进程读出cgi程序的执行结果，发给客户端
             while (read(childToParent[0], &ch, 1) > 0)
                 send(clientfd, &ch, sizeof(ch), 0);
-            // 关闭两个管道四个端（前面关掉两个了）
+            // 关闭两个管道
             close(childToParent[0]);
             close(parentToChild[1]);
             // 等待子进程的退出,第二个参数是记录子进程退出状态，null就不会记录
@@ -353,15 +353,15 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
  * @param paht 文件名路径
  * @brief 把报文头部发送客户端
 ********************************************************/
-void headers(int clientfd, string path)
+void headers(int clientfd)
 {
     char buf[] =
         "HTTP/1.0 200 OK\r\n"
-        "Server: httpd/0.1\r\n"
+        "Server: httpd/1.0\r\n"
         "Content-Type: text/html\r\n"
         "\r\n";
     send(clientfd, buf, sizeof(buf) - 1, 0);
-    cout << path <<" 响应报文header发送" << endl;
+    cout << "200 OK已发送" << endl;
 }
 
 /*******************************************************
@@ -380,7 +380,6 @@ void cat(int clientfd, FILE *res)
         send(clientfd, buf, strlen(buf), 0);
         fgets(buf, sizeof(buf), res);
     }
-    cout << "响应报文boy已发送" << endl;
 }
 
 /***************************************************************
@@ -401,7 +400,7 @@ void server_file(int clientfd, string path)
     else
     {
         // 文件成功打开后，将这个文件的基本信息封装成response的header发给客户端
-        headers(clientfd, path);
+        headers(clientfd);
         // 接着把这个文件的内容读出来作为responce的body发送到客户端
         cat(clientfd, res);
     }
@@ -558,7 +557,7 @@ void accept_request(int clientfd)
 int main()
 {
     int server_sockfd = -1;   // 服务器端的socket文件描述符
-    unsigned short port = 12345; // 端口号 0（自动选择临时可用端口)
+    unsigned short port = 23456; // 端口号 0（自动选择临时可用端口)
 
     server_sockfd = startup(port);
 
