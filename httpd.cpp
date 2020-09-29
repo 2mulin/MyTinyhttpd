@@ -11,7 +11,7 @@
 #include <sys/stat.h> // stat()判读文件是否存在
 
 #include <cstring>  //memset()头文件
-#include <cstdlib>  //exit()头文件
+#include <cstdlib>  //exit()、putenv()头文件
 #include <unistd.h> //close()头文件，pipe()
 #include <wait.h>   // waitpid()头文件
 #include <errno.h>
@@ -288,10 +288,10 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
         }
         case 0:
         { // 子进程执行cgi
-            // 将子进程的标准输出和管道写端共用一个文件句柄
+            // 管道写端绑定 子进程的标准输出
             close(1);
             dup2(childToParent[1], 1);
-            // 将子进程的标准输入和管道读端共用一个文件句柄
+            // 管道读端绑定 子进程的标准输入
             close(0);
             dup2(parentToChild[0], 0);
 
@@ -306,11 +306,14 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             {
                 string query_env = "QUERY_STRING=" + query;
                 putenv(const_cast<char *>(query_env.data()));
+				// 测试一下：环境变量是否配置成功
+				printf("%s \n"getenv("REQUEST_METHOD"));
             }
             else
             {
                 string length_env = "CONTENT_LENGTH=" + content_length;
                 putenv(const_cast<char *>(content_length.data()));
+				printf("%s \n"getenv("CONTENT_LENGTH"));
             }
             // execl()用来执行参数path字符串所代表的文件路径，接下来的参数代表执行该文件时
             // 传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
