@@ -301,24 +301,23 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             // 在子进程中设置环境变量
             string method_env = "REQUEST_METHOD=" + method;
             putenv(const_cast<char *>(method_env.data()));
+			// 测试一下：环境变量是否配置成功
+			// printf("%s \n", getenv("REQUEST_METHOD"));
             
             if (method == "GET")
             {
                 string query_env = "QUERY_STRING=" + query;
                 putenv(const_cast<char *>(query_env.data()));
-				// 测试一下：环境变量是否配置成功
-				printf("%s \n"getenv("REQUEST_METHOD"));
+				// printf("%s \n", getenv("QUERY_STRING"));
             }
             else
             {
                 string length_env = "CONTENT_LENGTH=" + content_length;
-                putenv(const_cast<char *>(content_length.data()));
-				printf("%s \n"getenv("CONTENT_LENGTH"));
+                putenv(const_cast<char *>(length_env.data()));
+				// printf("%s \n", getenv("CONTENT_LENGTH"));
             }
-            // execl()用来执行参数path字符串所代表的文件路径，接下来的参数代表执行该文件时
-            // 传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
-            if (execl(path.data(), NULL) == -1)
-                print_err("cgi执行错误");
+            // execl()用来执行参数 path字符串路径指定的文件 ，参数代表执行该文件时传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
+            execl(path.data(), NULL);
             exit(0); //子进程退出
             break;
         }
