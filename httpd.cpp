@@ -42,16 +42,13 @@ int startup(unsigned short &port)
     struct sockaddr_in server;
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
-    // 设置IPv4地址，这里应该是随机给的
-    server.sin_addr.s_addr = htonl(INADDR_ANY); // 本函数将一个32位数从主机字节顺序转换成网络字节顺序。
+    server.sin_addr.s_addr = htonl(INADDR_ANY); // 任意可用地址，转化成网络字节序
     server.sin_port = htons(port);              // 设置端口
 
     // 绑定socketfd和socket address，专用地址sockaddr_in记得转化成通用地址sockaddr
-    if (bind(sockfd, (sockaddr *)&server, sizeof(server)) == -1) // 若传进去的端口号为0，则系统会选择本地临时端口
+    if (bind(sockfd, (sockaddr *)&server, sizeof(server)) == -1) // 若端口号为0，则系统会选择本地临时端口
         print_err("startup()'s bind() failed");
 
-    // 若一个套接字与INADDR_ANY捆绑，也就是说该套接字可以用任意主机的地址，
-    // 此时除非调用connect()或accept()来连接，否则getsockname()将不会返回主机IP地址的任何信息。
     // getsockname可以返回自动设置的ip和端口到server中，这里返回端口
     socklen_t server_len = sizeof(server);
     if (getsockname(sockfd, (sockaddr *)&server, &server_len) == -1)
@@ -60,6 +57,7 @@ int startup(unsigned short &port)
 
     cout << "Server ip=" << inet_ntoa(server.sin_addr) << "\tport=" << port << endl;
 
+	// 开启监听
     if (listen(sockfd, 5) < 0)
         print_err("startup()'s listen()");
     return sockfd;
@@ -229,7 +227,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
     string content_length;
     if (method == "GET")
     {
-        // GET暂时忽略剩余首部和主体的内容。还不会实现
+        // GET暂时忽略剩余首部。没有实现
         while (len > 0)
             len = getline_request(clientfd, buf);
     }
@@ -433,7 +431,7 @@ void Get(int clientfd, string URI)
     // 如果有的话，读出URI中的query
     string URIquery;
     while (i < URI.length())
-        URIquery.push_back(URI[i]);
+		URIquery.push_back(URI[i++]);// i++,又害我改了一上午的bug
 
     // 判断请求的资源文件是否存在
     struct stat st;
@@ -518,7 +516,7 @@ void accept_request(int clientfd)
     size_t size = getline_request(clientfd, buf);
     if(size <= 0)
         return;
-    // 把请求报文的http方法记下来
+    // 读出请求行的http method
     string http_method;
     size_t i;
     for (i = 0; i < size; i++)
@@ -539,16 +537,15 @@ void accept_request(int clientfd)
     while (buf[i] == ' ')
         i++;
     string URI;
-    // 读出URI
+    // 读出请求URI
     for (; i < size; i++)
     {
         if (buf[i] == ' ')
             break;
         URI += buf[i];
     }
-    // 还有最后的http版本号
+    // 还有最后的http版本号没有读，好像暂时用不到
 
-    // 暂时没有考虑首部字段。
     if (http_method == "GET")
         Get(clientfd, URI);
     if (http_method == "POST")
@@ -559,7 +556,7 @@ void accept_request(int clientfd)
 int main()
 {
     int server_sockfd = -1;   // 服务器端的socket文件描述符
-    unsigned short port = 23456; // 端口号 0（自动选择临时可用端口)
+    unsigned short port = 23456; // 端口号设置为 0 表示自动选择临时可用端口
 
     server_sockfd = startup(port);
 
@@ -574,13 +571,13 @@ int main()
         if (client_sockfd == -1)
             print_err("main()'s accept() failed");
         else
-            cout << "tcp connected with ip=" << inet_ntoa(client_addr.sin_addr) << "\tport=" << client_addr.sin_port << endl;
+            cout << "client ip=" << inet_ntoa(client_addr.sin_addr) << "\tport=" << client_addr.sin_port << endl;
+		// 处理客户端请求
         accept_request(client_sockfd);
         // 关闭客户端连接
         close(client_sockfd);
         cout << endl;
     }
-
 
     close(server_sockfd);
     return 0;
