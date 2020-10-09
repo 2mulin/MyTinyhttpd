@@ -315,7 +315,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
 				// printf("%s \n", getenv("CONTENT_LENGTH"));
             }
             // execl()用来执行参数 path字符串路径指定的文件 ，参数代表执行该文件时传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
-            execl(path.data(), NULL);
+            execl(path.data(), path.data(), NULL);
             exit(0); //子进程退出
             break;
         }
