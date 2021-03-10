@@ -4,28 +4,29 @@
  * @brief 服务器端
  * 主要是参考了tinyhttpd的设计
 **************************************************/
-
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/stat.h> // stat()判读文件是否存在
-
-#include <cstring>  //memset()头文件
-#include <cstdlib>  //exit()、putenv()头文件
-#include <unistd.h> //close()头文件，pipe()
-#include <wait.h>   // waitpid()头文件
+#include <wait.h>
 #include <errno.h>
-#include <iostream>
-#include <string>
-using namespace std;
+#include <pthread.h>
 
-// errno是全局变量，输出错误消息
-void print_err(string msg)
-{
-    std::cerr << msg << endl;
-    std::cerr << "errno = " << errno << "," << strerror(errno) << std::endl;
-    exit(-1);
-}
+#include <cstring>
+#include <cstdlib>
+#include <cstdio>
+#include <string>
+
+#include "httpStat.h"
+#include "unit.h"
+
+using std::string;
+
+#define ERROR -1        // 错误
+#define NOT_IMPL -2     // http方法未实现
+#define NOT_FOD -3      // 文件未找到
+
+// 统计服务器处理请求次数
+static int count = 1;
 
 /***************************************************************
  * @param port: 端口号
@@ -38,179 +39,43 @@ int startup(unsigned short &port)
     // 生成一个socketfd
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
-        print_err("startup()'s socket() failed");
+    {
+        perror("socket()");
+        return -1;
+    }
     struct sockaddr_in server;
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY); // 任意可用地址，转化成网络字节序
     server.sin_port = htons(port);              // 设置端口
+	int opt = 1;
+	int ret = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if(ret == -1)
+		perror("setsockopt");
 
     // 绑定socketfd和socket address，专用地址sockaddr_in记得转化成通用地址sockaddr
-    if (bind(sockfd, (sockaddr *)&server, sizeof(server)) == -1) // 若端口号为0，则系统会选择本地临时端口
-        print_err("startup()'s bind() failed");
+    if (bind(sockfd, (sockaddr *)&server, sizeof(server)) == -1)
+    {
+        perror("bind()");
+        return -1;
+    }
 
     // getsockname可以返回自动设置的ip和端口到server中，这里返回端口
     socklen_t server_len = sizeof(server);
     if (getsockname(sockfd, (sockaddr *)&server, &server_len) == -1)
-        print_err("startup()'s getsockname() failed");
-    port = ntohs(server.sin_port); // 改变port，这里的port是引用
-
-    cout << "Server ip=" << inet_ntoa(server.sin_addr) << "\tport=" << port << endl;
-
+    {
+        perror("getsocknam()");
+        return -1;
+    }
+    port = ntohs(server.sin_port); // 改变port
+    printf("服务器IP：%s\t端口号：%d\n", inet_ntoa(server.sin_addr), port);
 	// 开启监听
     if (listen(sockfd, 5) < 0)
-        print_err("startup()'s listen()");
-    return sockfd;
-}
-
-/**************************************************************
- * @param clientfd 被读取一行的scoketfd（源地址）
- * @param buf 目的地址
- * @return std::size_t 读取到的长度
- * @brief 每次读取一字节(char)，直到读到报文行末"\r\n"
- * 如果读到了'\r'，替换成'\n'。行末的"\r\n"也替换成'\n'
- * linux换行是'\n', windows换行是"\r\n" ,macOS换行是'\r'
-***************************************************************/
-std::size_t getline_request(int clientfd, string &buf)
-{
-    // 清空buf
-    buf.clear();
-    // 设置recv超时时间，如果不设置的话，recv和send都会一直阻塞
-    struct timeval timeout = {3, 0}; // 3s
-    setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-
-    char ch = '\0', next = '\0';
-    while (ch != '\n')
     {
-        // recv读取后返回实际读取的长度。1是我当前想要读取的长度
-        // 返回-1表示错误，返回0表示socket已经关闭
-        int len = recv(clientfd, &ch, 1, 0);
-        // MSG_PEEK标志表示窥探缓存的数据，但是不会从缓冲中删除这些数据
-        int nextlen = recv(clientfd, &next, 1, MSG_PEEK);
-        if (len > 0 && nextlen > 0)
-        {
-            if (ch == '\r' && next == '\n')
-            {
-                recv(clientfd, &ch, 1, 0); // 行末\r\n,从缓存中读掉末尾的'\n'
-                break;                     // 已经确定这是行末\r\n,跳出循环
-            }
-            buf.push_back(ch);
-        }
-        else
-            ch = '\n'; // 报文错误，退出
+        perror("listen()");
+        return -1;
     }
-    return buf.length();
-}
-
-/*******************************************************************
- * @param clientfd 客户端socket
- * @return int类型 返回close()执行结果
- * @brief 500 Internal Server Error
- * 服务器执行请求过程中出错，可能是服务器存在bug。返回500状态给客户端。
- * 并且关闭连接
- *******************************************************************/
-int Internal_Server_Error(int clientfd)
-{
-    char buf[] =
-        "HTTP/1.0 500 Internal Server Error\r\n"
-        "Server: httpd1.0\r\n"
-        "Content-Type: text/html\r\n"
-        "\r\n"
-        "<html>\r\n"
-        "   <head>\r\n"
-        "       <title>\r\n"
-        "           500 Internal Server Error\r\n"
-        "       </title>\r\n"
-        "   </head>\r\n"
-        "   <body>\r\n"
-        "       <p>CGI execute Error</p>\r\n"
-        "   </body>\r\n"
-        "</html>\r\n";
-    if(send(clientfd, buf, sizeof(buf), 0) == -1)
-        return -1;
-    cout << "500 Internal Server Error 已发送" << endl;
-    return 0;
-}
-/********************************************************************
- * @param client 客户端socket
- * @return int类型 返回close()执行的结果
- * @brief 501 Not Implemented
- * http方法未实现，告知客户端
-********************************************************************/
-int not_implemented(int clientfd)
-{
-    char buf[] =
-        "HTTP/1.0 501 Not Implemented\r\n"
-        "Server: httpd1.0\r\n"
-        "Content-Type: text/html\r\n"
-        "\r\n"
-        "<html>\r\n"
-        "   <head>\r\n"
-        "       <title>501 not implemented</title>\r\n"
-        "   </head>\r\n"
-        "   <body>\r\n"
-        "       <p>HTTP request method not supported.</p>\r\n"
-        "   </body>\r\n"
-        "</html>\r\n";
-    if(send(clientfd, buf, sizeof(buf), 0) == -1)
-        return -1;
-    cout << "501 not_implemented 已发送" << endl;
-    return 0;
-}
-
-/********************************************************************
- * @param clientfd 客户端socket
- * @return int类型 close()执行的结果
- * @brief 404 Not found
- * 请求资源未找到，告知客户端
-********************************************************************/
-int not_found(int clientfd)
-{
-    char buf[] =
-        "HTTP/1.0 404 NOT FOUND\r\n"
-        "Server: httpd1.0\r\n"
-        "Content-Type: text/html\r\n"
-        "\r\n"
-        "<html>\r\n"
-        "   <head>\r\n"
-        "       <title>Not Found</title>\r\n"
-        "   </head>\r\n"
-        "   <body>\r\n"
-        "       <p>404 Not Found!</p>\r\n"
-        "   </body>\r\n"
-        "</html>\r\n";
-    if(send(clientfd, buf, sizeof(buf), 0) == -1)
-        return -1;
-    cout << "404 not found 已发送" << endl;
-    return 0;
-}
-
-/********************************************************************
- * @param clientfd 客户端socket
- * @return int类型 close()执行的结果
- * @brief 400 Bad request
- * 表示客户端发送的请求报文语法存在错误
-********************************************************************/
-int bad_request(int clientfd)
-{
-    char buf[] =
-        "HTTP/1.0 400 Bad request\r\n"
-        "Server: httpd1.0\r\n"
-        "Content-Type: text/html\r\n"
-        "\r\n"
-        "<html>\r\n"
-        "   <head>\r\n"
-        "       <title>Bad request</title>\r\n"
-        "   </head>\r\n"
-        "   <body>\r\n"
-        "       <p>Your browser sent to a bad request</p>\r\n"
-        "       <p>such as a POST without a Content-Length</p>\r\n"
-        "   </body>\r\n"
-        "</html>\r\n";
-    if(send(clientfd, buf, sizeof(buf) - 1, 0) == -1)
-        return -1;
-    cout << "400 bad request已发送" << endl;
-    return 0;
+    return sockfd;
 }
 
 /***************************************************************
@@ -229,7 +94,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
     {
         // GET暂时忽略剩余首部。没有实现
         while (len > 0)
-            len = getline_request(clientfd, buf);
+            len = get_line(clientfd, buf);
     }
     else
     {
@@ -238,7 +103,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
         // 所以content-length一定不为0
         while (len > 0)
         {
-            len = getline_request(clientfd, buf);
+            len = get_line(clientfd, buf);
             if (buf == "\r\n")
                 break;
             // 如果这一行是Conntent-Length
@@ -280,7 +145,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
     {
         case -1:
         {
-            print_err("fork函数出现错误");
+            perror("fork函数出现错误: ");
             Internal_Server_Error(clientfd);
             break;
         }
@@ -296,7 +161,7 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             close(childToParent[0]);
             close(parentToChild[1]);
 
-            // 在子进程中设置环境变量
+            // 设置环境变量
             string method_env = "REQUEST_METHOD=" + method;
             putenv(const_cast<char *>(method_env.data()));
 			// 测试一下：环境变量是否配置成功
@@ -306,15 +171,13 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             {
                 string query_env = "QUERY_STRING=" + query;
                 putenv(const_cast<char *>(query_env.data()));
-				// printf("%s \n", getenv("QUERY_STRING"));
             }
             else
             {
                 string length_env = "CONTENT_LENGTH=" + content_length;
                 putenv(const_cast<char *>(length_env.data()));
-				// printf("%s \n", getenv("CONTENT_LENGTH"));
             }
-            // execl()用来执行参数 path字符串路径指定的文件 ，参数代表执行该文件时传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
+            // 参数path可执行文件路径，后面的参数代表执行该文件时传递过去的argv(0)、argv[1]……，最后一个参数必须用空指针(NULL)作结束。
             execl(path.data(), path.data(), NULL);
             exit(0); //子进程退出
             break;
@@ -327,7 +190,8 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
             if (method == "POST")
             {// 如果是POST，继续读body的内容,并写到管道让子进程的execl执行的脚本作为输入
                 string buf;
-                for (int i = 0; i < stoi(content_length); i++)
+                int len = stoi(content_length);
+                for (int i = 0; i < len; i++)
                 {
                     recv(clientfd, &ch, 1, 0);
                     buf += ch;
@@ -346,22 +210,6 @@ void execute_cgi(int clientfd, const string path, string method, const string qu
         }
     }
     return;
-}
-
-/********************************************************
- * @param clientfd 客户端socket文件描述符
- * @param paht 文件名路径
- * @brief 把报文头部发送客户端
-********************************************************/
-void headers(int clientfd)
-{
-    char buf[] =
-        "HTTP/1.0 200 OK\r\n"
-        "Server: httpd/1.0\r\n"
-        "Content-Type: text/html\r\n"
-        "\r\n";
-    send(clientfd, buf, sizeof(buf) - 1, 0);
-    cout << "200 OK已发送" << endl;
 }
 
 /*******************************************************
@@ -391,19 +239,19 @@ void server_file(int clientfd, string path)
 {
     string buf;
     int len = 1;
-    // 读取http报文后面内容，暂时忽略后面所有的内容
-    while (len > 0)
-        len = getline_request(clientfd, buf);
-    FILE *res = fopen(path.c_str(), "r");
-    if (res == NULL)
-        not_found(clientfd);
-    else
+    // 读取http报文头部, 不处理
+    while (len > 0 && buf != "\r\n")
+        len = get_line(clientfd, buf);
+    FILE *res = fopen(path.c_str(), "rb");
+    if(res == NULL)
     {
-        // 文件成功打开后，将这个文件的基本信息封装成response的header发给客户端
-        headers(clientfd);
-        // 接着把这个文件的内容读出来作为responce的body发送到客户端
-        cat(clientfd, res);
+        printf("%s文件打开失败！\n", path.data());
+        exit(0);// 直接退出
     }
+    // 文件成功打开后，将这个文件的基本信息封装成response header先发给客户端
+    headers(clientfd);
+    // 接着把这个文件的内容读出来作为responce的body发送到客户端
+    cat(clientfd, res);
     fclose(res);
 }
 
@@ -414,9 +262,8 @@ void server_file(int clientfd, string path)
  * 请求指定的页面信息，并返回实体主体。如果发现URI中有'？'就需要执行cgi
  * 若是需要执行cgi程序的话。GET报文cgi参数在url后面
 ****************************************************************************************/
-void Get(int clientfd, string URI)
+void  Get(int clientfd, string URI)
 {
-    cout << "GET " << URI << endl;
     // 所有资源都在htdocs文件夹内
     string URIpath = "htdocs";
     // 读出URI中的path
@@ -424,32 +271,34 @@ void Get(int clientfd, string URI)
     while (i < URI.length())
     {
         if (URI[i] == '?')
+        {
+            ++i;
             break;
+        }
         URIpath.push_back(URI[i++]);
     }
-    i++;
     // 如果有的话，读出URI中的query
     string URIquery;
     while (i < URI.length())
-		URIquery.push_back(URI[i++]);// i++,又害我改了一上午的bug
+		URIquery.push_back(URI[i++]);
 
     // 判断请求的资源文件是否存在
-    struct stat st;
-    if (stat(URIpath.data(), &st) == -1)
+    struct stat statbuf;
+    if (stat(URIpath.data(), &statbuf) == -1)
     { // 文件不存在，读空请求报文的剩余部分，返回404 not found
-        int len = 1;
+        perror("stat");
         string buf;
-        while (len > 1)
-            len = getline_request(clientfd, buf);
+        while (get_line(clientfd, buf) > 0 && buf != "\r\n")
+            ;
         not_found(clientfd);
         return;
     }
 
     // 如果请求的资源存在，但是个目录，默认访问该目录下的index.html
-    if ((st.st_mode & __S_IFMT) == __S_IFDIR)
+    if ((statbuf.st_mode & S_IFMT) == S_IFDIR)
         URIpath += "index.html";
 
-    // 如果有<query>
+    // 如果有<query>,执行cgi
     if (!URIquery.empty())
         execute_cgi(clientfd, URIpath, "GET", URIquery);
     else
@@ -458,22 +307,19 @@ void Get(int clientfd, string URI)
 
 /**************************************************************************
  * @param clientfd 客户端socket描述符
- * @param URI url
+ * @param URI 请求URI
  * @brief POST的实现,向指定资源提交数据进行处理请求（例如提交表单）。
  * 数据被包含在请求体中。POST请求可能会导致新的资源的建立和或已有资源的修改。
 **************************************************************************/
 void Post(int clientfd, string URI)
 {
-    cout << "POST " << URI << endl;
-    //读出URI中filepath,假设没有参数params
-    string URIpath = "htdocs";
-    unsigned int i = 0;
+    string URIpath = "htdocs/cgi-bin";
+    size_t i = 0;
     while (i < URI.length())
     {
         if (URI[i] == '?')
             break;
-        URIpath += URI[i];
-        i++;
+        URIpath += URI[i++];
     }
     i++;
     // 如果有的话，读出URI中的query
@@ -485,10 +331,10 @@ void Post(int clientfd, string URI)
     struct stat st;
     if (stat(URIpath.data(), &st) == -1)
     { // 请求的文件不存在，读空缓存，返回404 not found
-        int len = 1;
+        perror("stat()错误：");
         string buf;
-        while (len > 1)
-            len = getline_request(clientfd, buf);
+        while (get_line(clientfd, buf) > 0)
+            ;
         not_found(clientfd);
         return;
     }
@@ -503,82 +349,90 @@ void Post(int clientfd, string URI)
 
 /*********************************************************************************************
  * @param client 请求的客户端sockfd
- * @return: 无
- * @brief 处理请求
- * URI可能是绝对路径，也可能是相对路径，相对路径居多，这里假设是相对路径/<path>;<params>?<query>
- * 完整绝对路径的格式：<scheme>://<user>:<password>@<host>:<port>/<path>;<params>?<query>
+ * @return: int 请求处理结果
+ * @brief 处理客户端的请求
+ * URI完整的格式：<scheme>://<user>:<password>@<host>:<port>/<path>;<params>?<query>
  * 大部分的url都只有三个部分<scheme>://<host>/<path>
- * 请求头的URI，一般是path?query
 **********************************************************************************************/
-void accept_request(int clientfd)
+static void* accept_request(void* arg)
 {
+    int clientfd = (intptr_t)arg;
+    if(clientfd <= 0)
+        printf("arg参数错误!\n");
     string buf;
-    size_t size = getline_request(clientfd, buf);
-    if(size <= 0)
-        return;
-    // 读出请求行的http method
+    size_t size = get_line(clientfd, buf);
+    if(size == 0)
+        return NULL;
+    // 请求行的http method
     string http_method;
-    size_t i;
-    for (i = 0; i < size; i++)
+    string::iterator it = buf.begin();
+    while(it != buf.end())
     {
-        if (buf[i] == ' ')
+        if (*it == ' ')
+        {
+            ++it; // 去掉空格
             break;
-        http_method += buf[i];
+        }
+        http_method.push_back(*it++);
     }
-
-    // 暂时实现GET和POST，其他的http方法直接返回未实现
+    // 暂时实现GET和POST，其他的http方法直接返回not implemented
     if (http_method != "GET" && http_method != "POST")
     {
-        cout << http_method << "未实现" << endl;
         not_implemented(clientfd);
-        return;
+        return NULL;
     }
-    // 读掉空格
-    while (buf[i] == ' ')
-        i++;
     string URI;
-    // 读出请求URI
-    for (; i < size; i++)
+    // 请求URI
+    while(it != buf.end())
     {
-        if (buf[i] == ' ')
+        if (*it == ' ')
+        {
+            ++it;
             break;
-        URI += buf[i];
+        }
+        URI.push_back(*it++);
     }
-    // 还有最后的http版本号没有读，好像暂时用不到
-
+    // http版本号
+    string httpVersion(it, buf.end());
     if (http_method == "GET")
+    {
+        printf("GET %s %s\n", URI.data(), httpVersion.data());
         Get(clientfd, URI);
+    }
     if (http_method == "POST")
+    {
+        printf("POST %s %s\n", URI.data(), httpVersion.data());
         Post(clientfd, URI);
-    return;
+    }
+
+    if(close(clientfd) == -1)
+        perror("close");
 }
 
 int main()
 {
-    int server_sockfd = -1;   // 服务器端的socket文件描述符
-    unsigned short port = 23456; // 端口号设置为 0 表示自动选择临时可用端口
-
-    server_sockfd = startup(port);
-
-    cout << "httpd1.0 running on port:" << port << endl;
+    unsigned short port = 23456;
+    int server_sock = startup(port);
     while (true)
     {
-        int client_sockfd = -1;   // 客户端的socket文件描述符
+        printf("等待第%d个请求：\n", count++);
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         // 接受客户端连接
-        client_sockfd = accept(server_sockfd, (sockaddr *)&client_addr, &client_len);
-        if (client_sockfd == -1)
-            print_err("main()'s accept() failed");
-        else
-            cout << "client ip=" << inet_ntoa(client_addr.sin_addr) << "\tport=" << client_addr.sin_port << endl;
-		// 处理客户端请求
-        accept_request(client_sockfd);
-        // 关闭客户端连接
-        close(client_sockfd);
-        cout << endl;
+        int client = accept(server_sock, (sockaddr *)&client_addr, &client_len);
+        if (client == -1)
+        {
+            perror("accept()");
+            return -1;
+        }
+        // 创建一个线程处理请求
+        pthread_t tid;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        if(-1 == pthread_create(&tid, NULL, accept_request, (void *)(intptr_t)client));
+            perror("pthread_create");
     }
-
-    close(server_sockfd);
+    close(server_sock);
     return 0;
 }
