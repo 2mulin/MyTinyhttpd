@@ -1,5 +1,5 @@
-#ifndef HTTPSTAT_H
-#define HTTPSTAT_H
+#ifndef HTTP_STAT_H
+#define HTTP_STAT_H
 
 #include <string>
 
@@ -83,4 +83,4 @@ std::string gStrBadRequest =
     "   </body>\r\n"
     "</html>\r\n";
 
-#endif //HTTPSTAT_H
+#endif //HTTP_STAT_H

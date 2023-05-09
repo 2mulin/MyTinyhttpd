@@ -27,11 +27,11 @@ static std::unordered_set<int*> gSetClientSocks;
 /**
  * @param port 端口号
  * @return server使用的端口号
- * @brief 创建sockfd并绑定server sockaddr，确定端口号，并且返回socketfd
+ * @brief 创建sockfd并绑定server sockaddr，确定端口号，并且返回socket
  */
 int startup(unsigned short &port)
 {
-    // 生成一个socketfd
+    // 生成一个socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
     {
@@ -51,7 +51,7 @@ int startup(unsigned short &port)
         return -1;
     }
 
-    // 绑定socketfd和socket address，专用地址sockaddr_in记得转化成通用地址sockaddr
+    // 绑定socket和socket address，专用地址sockaddr_in记得转化成通用地址sockaddr
     if (bind(sockfd, (sockaddr *)&server, sizeof(server)) == -1)
     {
         LOG_FATAL << "bind: " << strerror(errno);
@@ -65,7 +65,7 @@ int startup(unsigned short &port)
         return -1;
     }
 
-    // getsockname可以返回socfd绑定的ip和端口到 server结构体 中
+    // getsockname可以返回sockfd绑定的ip和端口到 server结构体 中
     socklen_t serverLen = sizeof(server);
     if (getsockname(sockfd, (sockaddr *)&server, &serverLen) == -1)
     {
@@ -79,7 +79,7 @@ int startup(unsigned short &port)
 
 /**
  * @brief 执行cgi程序
- * @param clientSock 客户端scoket文件描述符
+ * @param clientSock 客户端socket文件描述符
  * @param strPath cgi脚本的路径
  * @param strMethod 请求的方法
  * @param strQuery 查询，kye=value的格式。可以作为cgi的参数
@@ -112,7 +112,7 @@ bool executeCgi(int clientSock, const string& strPath, const string& strMethod, 
                 break;  // 头部字段读取完毕, body后续再读取
             // 否则就是 字段值, 去除末尾的 "\r\n"
             buf = strip(buf);
-            // 第一个':'  出现的位置, 不能用splie函数, 因为可能有多个':' 如Host字段
+            // 第一个':'  出现的位置, 不能用split函数, 因为可能有多个':' 如Host字段
             std::string::size_type pos = buf.find(':');
             std::string key = buf.substr(0, pos);
             std::transform(key.begin(), key.end(),
@@ -257,7 +257,7 @@ bool sendServerFile(int clientSock, const string& strPath)
     // 先发送header给客户端
     write(clientSock, gStrResponseHeader.c_str(), gStrResponseHeader.length());
 
-    // 将文件所有内容读出来, 作为responce的body发送到客户端
+    // 将文件所有内容读出来, 作为response的body发送到客户端
     char buf[4096] = {0};
     ssize_t rtn = 1;
     while(rtn > 0)
