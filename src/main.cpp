@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <wait.h>
-#include <errno.h>
+#include <cerrno>
 
 #include "httpstat.h"
 #include "unit.h"
@@ -85,7 +85,7 @@ int startup(unsigned short &port)
  * @param strQuery 查询，kye=value的格式。可以作为cgi的参数
  * @return bool true成功, false失败
  */
-bool executeCgi(int clientSock, const string strPath, string strMethod, const string strQuery)
+bool executeCgi(int clientSock, const string& strPath, const string& strMethod, const string& strQuery)
 {
     int iContentLength = -1;
     if (strMethod == "GET")
@@ -204,7 +204,7 @@ bool executeCgi(int clientSock, const string strPath, string strMethod, const st
             memset(buf, 0, iContentLength + 1);
             read(clientSock, buf, iContentLength);
             write(parentToChild[1], buf, strlen(buf));
-            delete buf;
+            delete[] buf;
         }
         // 先发送header给客户端
         write(clientSock, gStrResponseHeader.c_str(), gStrResponseHeader.length());
@@ -234,7 +234,7 @@ bool executeCgi(int clientSock, const string strPath, string strMethod, const st
  * @brief 向客户端发送文件内容
  * @return bool true成功, false失败
  */
-bool sendServerFile(int clientSock, string strPath)
+bool sendServerFile(int clientSock, const string& strPath)
 {
     // 读取http请求的header字段和body, 但实际上不进行处理
     string requestHttpHead;
@@ -259,7 +259,7 @@ bool sendServerFile(int clientSock, string strPath)
 
     // 将文件所有内容读出来, 作为responce的body发送到客户端
     char buf[4096] = {0};
-    int rtn = 1;
+    ssize_t rtn = 1;
     while(rtn > 0)
     {
         rtn = read(fd, buf, sizeof(buf) - 1);
@@ -275,7 +275,7 @@ bool sendServerFile(int clientSock, string strPath)
  * @brief 处理GET请求; 请求指定的页面信息，并返回实体主体。如果发现URI中有'？'就需要执行cgi
  * 若是需要执行cgi程序的话。GET报文cgi参数在url后面
  */
-void processGet(int clientSock, string strURI)
+void processGet(int clientSock, const string& strURI)
 {
     // 所有资源都在htdocs文件夹内, htdocs对外, 相当于是 整个httpd 的根目录;
     string strPath = "htdocs";
@@ -300,7 +300,7 @@ void processGet(int clientSock, string strURI)
     }
 
     struct stat statTarget;
-    rtn = stat(strPath.c_str(), &statTarget);
+    stat(strPath.c_str(), &statTarget);
     // 如果请求的资源存在，是目录，默认访问该目录下的index.html
     if ((statTarget.st_mode & S_IFMT) == S_IFDIR)
         strPath += "/index.html";
@@ -328,7 +328,7 @@ void processGet(int clientSock, string strURI)
  * @param clientSock 客户端socket
  * @param URI 请求URI
  */
-void processPost(int clientSock, string strURI)
+void processPost(int clientSock, const string& strURI)
 {
     string strPath = "htdocs/cgi-bin";
     string strQuery;
@@ -358,14 +358,14 @@ void processPost(int clientSock, string strURI)
 void waitSockClose(int clientSock)
 {
     shutdown(clientSock, SHUT_WR);
-    int rtn = 1;
+    ssize_t rtn = 1;
     char* buf = new char[4096];
     // 直到read返回0, 才表示对端关闭;
     while(rtn != 0)
     {
         rtn = read(clientSock, buf, 4095);
     }
-    delete buf;
+    delete[] buf;
     shutdown(clientSock, SHUT_RD);
 }
 

@@ -16,10 +16,9 @@ std::string getLine(int clientFd);
 
 /**
  * @brief 去除字符串 尾部的空白字符; 如"\r\n", "\n", "\r"字符, 以及空格
- * @return std::string 
+ * @return std::string
  */
 std::string strip(std::string str);
-
 
 /**
  * @brief 字符串分割, 将一个字符串按照指定字符分割为多个字符串
@@ -37,7 +36,7 @@ enum class ELogLevel
     FATAL
 };
 
-// 日志等级 转化为 字符串 
+// 日志等级 转化为 字符串
 std::string LogLevelToStr(ELogLevel level);
 
 class LogEvent
@@ -46,11 +45,11 @@ public:
     LogEvent(ELogLevel level);
     ~LogEvent();
 
-    void format(const char* fmt, ...);
-    std::stringstream& getSS();
+    void format(const char *fmt, ...);
+    std::stringstream &getSS();
 
 private:
-    ELogLevel         m_level;
+    ELogLevel m_level;
     std::stringstream m_ss;
 };
 
